@@ -4,6 +4,7 @@ Load and save League of Legends .tex texture files in Paint.NET 5.1.11 (latest)
 
 ## Features
 - Seamless installation wizard, includes [Tex Previews](https://github.com/RitoShark/TexThumbnailProvider) in the installer.
+- Easy uninstall through the installation wizard.
 - Load DXT1, DXT5, and BGRA8 texture formats.
 - Fast DXT compression/decompression using native C#.
 - Full alpha channel support.
