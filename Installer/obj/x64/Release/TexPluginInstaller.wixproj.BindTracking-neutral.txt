@@ -1,0 +1,15 @@
+BuiltPdbOutput	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\Tex Plugin Installer.wixpdb
+BuiltTargetOutput	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\Tex Plugin Installer.msi
+Input	..\bin\Release\net9.0-windows\TexFileType.dll
+Input	C:\Users\Jovan\.nuget\packages\wixtoolset.ui.wixext\5.0.2\wixext5\WixToolset.UI.wixext.dll
+Input	C:\Users\Jovan\.nuget\packages\wixtoolset.util.wixext\5.0.2\wixext5\WixToolset.Util.wixext.dll
+Input	TexThumbnailProvider.dll
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\#cab1.cab
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\WixToolset.UI.wixext_c1UAK50vdvcpgdZWNvvRbtLxc10\wix-ir\bannrbmp.bmp
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\WixToolset.UI.wixext_c1UAK50vdvcpgdZWNvvRbtLxc10\wix-ir\dlgbmp.bmp
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\WixToolset.UI.wixext_c1UAK50vdvcpgdZWNvvRbtLxc10\wix-ir\exclamic.ico
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\WixToolset.UI.wixext_c1UAK50vdvcpgdZWNvvRbtLxc10\wix-ir\info.ico
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\WixToolset.UI.wixext_c1UAK50vdvcpgdZWNvvRbtLxc10\wix-ir\new.ico
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\WixToolset.UI.wixext_c1UAK50vdvcpgdZWNvvRbtLxc10\wix-ir\uica.dll-1
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\WixToolset.UI.wixext_c1UAK50vdvcpgdZWNvvRbtLxc10\wix-ir\up.ico
+Intermediate	C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\WixToolset.Util.wixext_S5HSpBeCiPosSXPWQAefn5K2QK4\wix-ir\utilca.dll-1

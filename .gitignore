@@ -1,15 +1,9 @@
-bin/
-obj/
 *.user
 *.suo
 *.cache
 .vs/
-*.dll
-*.pdb
-*.exe
-*.msi
-*.wixpdb
-*.log
 exporterrorlog.txt
 reset_registry.reg
 reset_registry.bat
+Installer/TexThumbnailProvider.dll
+Installer/RestartExplorer.ps1

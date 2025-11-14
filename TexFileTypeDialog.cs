@@ -6,21 +6,21 @@ using System.IO;
 
 namespace TexFileTypePlugin
 {
-    public class TexFileTypeFactory : IFileTypeFactory
+    public class TexFileTypeDialogFactory : IFileTypeFactory
     {
         public FileType[] GetFileTypeInstances()
         {
-            return new FileType[] { new TexFileType() };
+            return new FileType[] { new TexFileTypeDialog() };
         }
     }
 
-    internal class TexFileType : FileType
+    internal class TexFileTypeDialog : FileType
     {
         private static readonly System.Collections.Generic.Dictionary<int, byte> documentFormats = new();
 
-        public TexFileType()
+        public TexFileTypeDialog()
             : base(
-                "League of Legends TEX",
+                "League of Legends TEX (with options)",
                 new FileTypeOptions
                 {
                     LoadExtensions = new string[] { ".tex" },
@@ -59,6 +59,16 @@ namespace TexFileTypePlugin
             return doc;
         }
 
+        protected override SaveConfigToken OnCreateDefaultSaveConfigToken()
+        {
+            return new TexSaveConfigToken();
+        }
+
+        public override SaveConfigWidget? CreateSaveConfigWidget()
+        {
+            return new TexSaveConfigWidget();
+        }
+
         protected override void OnSave(Document input, Stream output, SaveConfigToken? saveConfigToken, Surface scratchSurface, ProgressEventHandler? progressCallback)
         {
             input.Flatten(scratchSurface);
@@ -67,7 +77,12 @@ namespace TexFileTypePlugin
             int height = scratchSurface.Height;
 
             byte format = 12; // Default to DXT5
-            if (documentFormats.TryGetValue(input.GetHashCode(), out byte savedFormat))
+            
+            if (saveConfigToken is TexSaveConfigToken token)
+            {
+                format = token.CompressionFormat;
+            }
+            else if (documentFormats.TryGetValue(input.GetHashCode(), out byte savedFormat))
             {
                 format = savedFormat;
             }
@@ -211,9 +226,8 @@ namespace TexFileTypePlugin
 
         private void CompressDxt5Block(byte[] rgba, int width, int height, int blockX, int blockY, byte[] output, int offset)
         {
-            // Extract 4x4 block of pixels
             byte[] alphas = new byte[16];
-            byte[] colors = new byte[48]; // RGB for 16 pixels
+            byte[] colors = new byte[48];
 
             for (int y = 0; y < 4; y++)
             {
@@ -226,10 +240,10 @@ namespace TexFileTypePlugin
                     if (px < width && py < height)
                     {
                         int pixelIdx = (py * width + px) * 4;
-                        colors[idx * 3] = rgba[pixelIdx];     // R
-                        colors[idx * 3 + 1] = rgba[pixelIdx + 1]; // G
-                        colors[idx * 3 + 2] = rgba[pixelIdx + 2]; // B
-                        alphas[idx] = rgba[pixelIdx + 3];     // A
+                        colors[idx * 3] = rgba[pixelIdx];
+                        colors[idx * 3 + 1] = rgba[pixelIdx + 1];
+                        colors[idx * 3 + 2] = rgba[pixelIdx + 2];
+                        alphas[idx] = rgba[pixelIdx + 3];
                     }
                     else
                     {
@@ -241,16 +255,12 @@ namespace TexFileTypePlugin
                 }
             }
 
-            // Compress alpha (first 8 bytes)
             CompressAlphaBlock(alphas, output, offset);
-
-            // Compress color (next 8 bytes)
             CompressColorBlock(colors, output, offset + 8);
         }
 
         private void CompressAlphaBlock(byte[] alphas, byte[] output, int offset)
         {
-            // Find min and max alpha
             byte minAlpha = 255;
             byte maxAlpha = 0;
             foreach (byte a in alphas)
@@ -262,7 +272,6 @@ namespace TexFileTypePlugin
             output[offset] = maxAlpha;
             output[offset + 1] = minAlpha;
 
-            // Interpolate and encode alpha values
             byte[] alphaPalette = new byte[8];
             alphaPalette[0] = maxAlpha;
             alphaPalette[1] = minAlpha;
@@ -284,7 +293,6 @@ namespace TexFileTypePlugin
                 alphaPalette[7] = 255;
             }
 
-            // Encode 16 alpha values as 3-bit indices (48 bits total)
             ulong bits = 0;
             for (int i = 0; i < 16; i++)
             {
@@ -310,7 +318,6 @@ namespace TexFileTypePlugin
 
         private void CompressColorBlock(byte[] colors, byte[] output, int offset)
         {
-            // Find min and max colors (simple bbox in RGB space)
             int minR = 255, minG = 255, minB = 255;
             int maxR = 0, maxG = 0, maxB = 0;
 
@@ -328,11 +335,9 @@ namespace TexFileTypePlugin
                 if (b > maxB) maxB = b;
             }
 
-            // Convert to RGB565
             ushort color0 = (ushort)(((maxR >> 3) << 11) | ((maxG >> 2) << 5) | (maxB >> 3));
             ushort color1 = (ushort)(((minR >> 3) << 11) | ((minG >> 2) << 5) | (minB >> 3));
 
-            // Ensure color0 > color1 for 4-color mode
             if (color0 < color1)
             {
                 ushort temp = color0;
@@ -345,7 +350,6 @@ namespace TexFileTypePlugin
             output[offset + 2] = (byte)(color1 & 0xFF);
             output[offset + 3] = (byte)(color1 >> 8);
 
-            // Build color palette
             byte[] palette = new byte[12];
             palette[0] = (byte)maxR; palette[1] = (byte)maxG; palette[2] = (byte)maxB;
             palette[3] = (byte)minR; palette[4] = (byte)minG; palette[5] = (byte)minB;
@@ -356,7 +360,6 @@ namespace TexFileTypePlugin
             palette[10] = (byte)((maxG + minG * 2) / 3);
             palette[11] = (byte)((maxB + minB * 2) / 3);
 
-            // Encode 16 pixels as 2-bit indices
             uint bits = 0;
             for (int i = 0; i < 16; i++)
             {

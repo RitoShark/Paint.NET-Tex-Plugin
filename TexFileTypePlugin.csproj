@@ -45,6 +45,14 @@
       <HintPath>$(PaintDotNetPath)\PaintDotNet.ComponentModel.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="PaintDotNet.UI">
+      <HintPath>$(PaintDotNetPath)\PaintDotNet.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
   </ItemGroup>
 
 </Project>

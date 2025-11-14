@@ -1,0 +1,6 @@
+C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\TexPluginInstaller.wixproj.CoreCompileInputs.cache
+C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\TexPluginInstaller.wixproj.BindTracking-neutral.txt
+C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\bin\x64\Release\Tex Plugin Installer.msi
+C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\bin\x64\Release\Tex Plugin Installer.wixpdb
+C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\Tex Plugin Installer.msi
+C:\Users\Jovan\Desktop\texexporter\PaintDotNet_TEX_Plugin\Installer\obj\x64\Release\Tex Plugin Installer.wixpdb
