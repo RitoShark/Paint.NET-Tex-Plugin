@@ -17,6 +17,7 @@ namespace TexFileTypePlugin
     internal class TexFileType : FileType
     {
         private static readonly System.Collections.Generic.Dictionary<int, byte> documentFormats = new();
+        private static readonly System.Collections.Generic.Dictionary<int, bool> documentMipmaps = new();
 
         public TexFileType()
             : base(
@@ -38,7 +39,7 @@ namespace TexFileTypePlugin
             byte[] rgba = tex.DecompressToRgba();
 
             Document doc = new Document(tex.Width, tex.Height);
-            BitmapLayer layer = new BitmapLayer(tex.Width, tex.Height);
+            BitmapLayer layer = new BitmapLayer(tex.Width, tex.Height) { Name = "Background" };
 
             Surface surface = layer.Surface;
             for (int y = 0; y < tex.Height; y++)
@@ -56,6 +57,7 @@ namespace TexFileTypePlugin
 
             doc.Layers.Add(layer);
             documentFormats[doc.GetHashCode()] = tex.Format;
+            documentMipmaps[doc.GetHashCode()] = tex.Mipmaps;
             return doc;
         }
 
@@ -129,35 +131,35 @@ namespace TexFileTypePlugin
                 }
             }
 
+            bool generateMipmaps = false;
+            if (documentMipmaps.TryGetValue(input.GetHashCode(), out bool savedMipmaps))
+            {
+                generateMipmaps = savedMipmaps;
+            }
+
             TexFile tex = new TexFile
             {
                 Width = (ushort)width,
                 Height = (ushort)height,
                 Format = format,
-                Mipmaps = false,
+                Mipmaps = generateMipmaps,
                 Data = data
             };
 
-            byte[] fileData = tex.Write();
+            byte[] fileData = tex.Write((rgba, w, h, fmt) =>
+            {
+                if (fmt == 10) // DXT1
+                    return CompressDxt1Native(rgba, w, h);
+                else // DXT5
+                    return CompressDxt5Native(rgba, w, h);
+            });
             output.Write(fileData, 0, fileData.Length);
         }
 
         private byte[] CompressDxt1Native(byte[] rgba, int width, int height)
         {
-            int blockWidth = (width + 3) / 4;
-            int blockHeight = (height + 3) / 4;
-            byte[] output = new byte[blockWidth * blockHeight * 8];
-
-            for (int by = 0; by < blockHeight; by++)
-            {
-                for (int bx = 0; bx < blockWidth; bx++)
-                {
-                    int blockOffset = (by * blockWidth + bx) * 8;
-                    CompressDxt1Block(rgba, width, height, bx * 4, by * 4, output, blockOffset);
-                }
-            }
-
-            return output;
+            // Use pure C# DirectXTex port (dithering enabled, perceptual mode)
+            return DirectXTexCompressor.CompressBC1(rgba, width, height, true, true);
         }
 
         private void CompressDxt1Block(byte[] rgba, int width, int height, int blockX, int blockY, byte[] output, int offset)
@@ -193,20 +195,8 @@ namespace TexFileTypePlugin
 
         private byte[] CompressDxt5Native(byte[] rgba, int width, int height)
         {
-            int blockWidth = (width + 3) / 4;
-            int blockHeight = (height + 3) / 4;
-            byte[] output = new byte[blockWidth * blockHeight * 16];
-
-            for (int by = 0; by < blockHeight; by++)
-            {
-                for (int bx = 0; bx < blockWidth; bx++)
-                {
-                    int blockOffset = (by * blockWidth + bx) * 16;
-                    CompressDxt5Block(rgba, width, height, bx * 4, by * 4, output, blockOffset);
-                }
-            }
-
-            return output;
+            // Use pure C# DirectXTex port (dithering enabled, perceptual mode)
+            return DirectXTexCompressor.CompressBC3(rgba, width, height, true, true);
         }
 
         private void CompressDxt5Block(byte[] rgba, int width, int height, int blockX, int blockY, byte[] output, int offset)
@@ -310,34 +300,175 @@ namespace TexFileTypePlugin
 
         private void CompressColorBlock(byte[] colors, byte[] output, int offset)
         {
-            // Find min and max colors (simple bbox in RGB space)
-            int minR = 255, minG = 255, minB = 255;
-            int maxR = 0, maxG = 0, maxB = 0;
+            // Default: dithering enabled with perceptual error metric
+            CompressColorBlockWithDithering(colors, output, offset, true, true);
+        }
+
+        private void CompressColorBlockWithDithering(byte[] colors, byte[] output, int offset, bool useDithering, bool usePerceptual)
+        {
+            // Perceptual weights from DirectXTex BC.cpp
+            float lumR = usePerceptual ? (0.2125f / 0.7154f) : 1.0f;
+            float lumG = 1.0f;
+            float lumB = usePerceptual ? (0.0721f / 0.7154f) : 1.0f;
+            float lumRInv = usePerceptual ? (0.7154f / 0.2125f) : 1.0f;
+            float lumBInv = usePerceptual ? (0.7154f / 0.0721f) : 1.0f;
+
+            // Convert colors to normalized float with optional dithering pre-quantization
+            float[] colorR = new float[16];
+            float[] colorG = new float[16];
+            float[] colorB = new float[16];
+            float[] errorR = new float[16];
+            float[] errorG = new float[16];
+            float[] errorB = new float[16];
 
             for (int i = 0; i < 16; i++)
             {
-                int r = colors[i * 3];
-                int g = colors[i * 3 + 1];
-                int b = colors[i * 3 + 2];
+                float r = colors[i * 3] / 255.0f;
+                float g = colors[i * 3 + 1] / 255.0f;
+                float b = colors[i * 3 + 2] / 255.0f;
 
-                if (r < minR) minR = r;
-                if (g < minG) minG = g;
-                if (b < minB) minB = b;
-                if (r > maxR) maxR = r;
-                if (g > maxG) maxG = g;
-                if (b > maxB) maxB = b;
+                if (useDithering)
+                {
+                    r += errorR[i];
+                    g += errorG[i];
+                    b += errorB[i];
+                }
+
+                r = Math.Max(0, Math.Min(1, r));
+                g = Math.Max(0, Math.Min(1, g));
+                b = Math.Max(0, Math.Min(1, b));
+
+                float qr = (float)Math.Round(r * 31.0f) / 31.0f;
+                float qg = (float)Math.Round(g * 63.0f) / 63.0f;
+                float qb = (float)Math.Round(b * 31.0f) / 31.0f;
+
+                colorR[i] = qr;
+                colorG[i] = qg;
+                colorB[i] = qb;
+
+                if (useDithering)
+                {
+                    float diffR = r - qr;
+                    float diffG = g - qg;
+                    float diffB = b - qb;
+
+                    if ((i & 3) != 3 && i + 1 < 16) { errorR[i + 1] += diffR * (7.0f / 16.0f); errorG[i + 1] += diffG * (7.0f / 16.0f); errorB[i + 1] += diffB * (7.0f / 16.0f); }
+                    if (i < 12)
+                    {
+                        if ((i & 3) != 0) { errorR[i + 3] += diffR * (3.0f / 16.0f); errorG[i + 3] += diffG * (3.0f / 16.0f); errorB[i + 3] += diffB * (3.0f / 16.0f); }
+                        errorR[i + 4] += diffR * (5.0f / 16.0f); errorG[i + 4] += diffG * (5.0f / 16.0f); errorB[i + 4] += diffB * (5.0f / 16.0f);
+                        if ((i & 3) != 3) { errorR[i + 5] += diffR * (1.0f / 16.0f); errorG[i + 5] += diffG * (1.0f / 16.0f); errorB[i + 5] += diffB * (1.0f / 16.0f); }
+                    }
+                }
             }
 
-            // Convert to RGB565
-            ushort color0 = (ushort)(((maxR >> 3) << 11) | ((maxG >> 2) << 5) | (maxB >> 3));
-            ushort color1 = (ushort)(((minR >> 3) << 11) | ((minG >> 2) << 5) | (minB >> 3));
+            // Apply perceptual weighting to colors for optimization
+            float[] wR = new float[16];
+            float[] wG = new float[16];
+            float[] wB = new float[16];
+            for (int i = 0; i < 16; i++)
+            {
+                wR[i] = colorR[i] * lumR;
+                wG[i] = colorG[i] * lumG;
+                wB[i] = colorB[i] * lumB;
+            }
 
-            // Ensure color0 > color1 for 4-color mode
+            // Find initial min/max (bounding box in weighted color space)
+            float xR = 1, xG = 1, xB = 1;
+            float yR = 0, yG = 0, yB = 0;
+            for (int i = 0; i < 16; i++)
+            {
+                if (wR[i] < xR) xR = wR[i];
+                if (wG[i] < xG) xG = wG[i];
+                if (wB[i] < xB) xB = wB[i];
+                if (wR[i] > yR) yR = wR[i];
+                if (wG[i] > yG) yG = wG[i];
+                if (wB[i] > yB) yB = wB[i];
+            }
+
+            // Try to optimize along the diagonal axis
+            float abR = yR - xR, abG = yG - xG, abB = yB - xB;
+            float fAB = abR * abR + abG * abG + abB * abB;
+
+            if (fAB >= 1.0f / 4096.0f)
+            {
+                // Newton's Method optimization (8 iterations)
+                float[] pC4 = { 1.0f, 2.0f / 3.0f, 1.0f / 3.0f, 0.0f };
+                float[] pD4 = { 0.0f, 1.0f / 3.0f, 2.0f / 3.0f, 1.0f };
+                const float fEpsilon = (0.25f / 64.0f) * (0.25f / 64.0f);
+
+                for (int iteration = 0; iteration < 8; iteration++)
+                {
+                    float dirR = yR - xR, dirG = yG - xG, dirB = yB - xB;
+                    float fLen = dirR * dirR + dirG * dirG + dirB * dirB;
+                    if (fLen < 1.0f / 4096.0f) break;
+
+                    float fScale = 3.0f / fLen;
+                    dirR *= fScale; dirG *= fScale; dirB *= fScale;
+
+                    float[] stepR = new float[4], stepG = new float[4], stepB = new float[4];
+                    for (int s = 0; s < 4; s++)
+                    {
+                        stepR[s] = xR * pC4[s] + yR * pD4[s];
+                        stepG[s] = xG * pC4[s] + yG * pD4[s];
+                        stepB[s] = xB * pC4[s] + yB * pD4[s];
+                    }
+
+                    float d2X = 0, d2Y = 0;
+                    float dxR = 0, dxG = 0, dxB = 0;
+                    float dyR = 0, dyG = 0, dyB = 0;
+
+                    for (int i = 0; i < 16; i++)
+                    {
+                        float fDot = (wR[i] - xR) * dirR + (wG[i] - xG) * dirG + (wB[i] - xB) * dirB;
+                        int iStep = fDot <= 0 ? 0 : (fDot >= 3.0f ? 3 : (int)(fDot + 0.5f));
+
+                        float diffR = stepR[iStep] - wR[i];
+                        float diffG = stepG[iStep] - wG[i];
+                        float diffB = stepB[iStep] - wB[i];
+
+                        float fC = pC4[iStep] * (1.0f / 8.0f);
+                        float fD = pD4[iStep] * (1.0f / 8.0f);
+
+                        d2X += fC * pC4[iStep];
+                        dxR += fC * diffR; dxG += fC * diffG; dxB += fC * diffB;
+
+                        d2Y += fD * pD4[iStep];
+                        dyR += fD * diffR; dyG += fD * diffG; dyB += fD * diffB;
+                    }
+
+                    if (d2X > 0) { float f = -1.0f / d2X; xR += dxR * f; xG += dxG * f; xB += dxB * f; }
+                    if (d2Y > 0) { float f = -1.0f / d2Y; yR += dyR * f; yG += dyG * f; yB += dyB * f; }
+
+                    if (dxR * dxR < fEpsilon && dxG * dxG < fEpsilon && dxB * dxB < fEpsilon &&
+                        dyR * dyR < fEpsilon && dyG * dyG < fEpsilon && dyB * dyB < fEpsilon)
+                        break;
+                }
+            }
+
+            float c0R = Math.Max(0, Math.Min(1, xR * lumRInv));
+            float c0G = Math.Max(0, Math.Min(1, xG));
+            float c0B = Math.Max(0, Math.Min(1, xB * lumBInv));
+            float c1R = Math.Max(0, Math.Min(1, yR * lumRInv));
+            float c1G = Math.Max(0, Math.Min(1, yG));
+            float c1B = Math.Max(0, Math.Min(1, yB * lumBInv));
+
+            ushort color0 = (ushort)(((int)(c0R * 31 + 0.5f) << 11) | ((int)(c0G * 63 + 0.5f) << 5) | (int)(c0B * 31 + 0.5f));
+            ushort color1 = (ushort)(((int)(c1R * 31 + 0.5f) << 11) | ((int)(c1G * 63 + 0.5f) << 5) | (int)(c1B * 31 + 0.5f));
+
+            float p0R = ((color0 >> 11) & 31) / 31.0f;
+            float p0G = ((color0 >> 5) & 63) / 63.0f;
+            float p0B = (color0 & 31) / 31.0f;
+            float p1R = ((color1 >> 11) & 31) / 31.0f;
+            float p1G = ((color1 >> 5) & 63) / 63.0f;
+            float p1B = (color1 & 31) / 31.0f;
+
             if (color0 < color1)
             {
-                ushort temp = color0;
-                color0 = color1;
-                color1 = temp;
+                ushort temp = color0; color0 = color1; color1 = temp;
+                float t = p0R; p0R = p1R; p1R = t;
+                t = p0G; p0G = p1G; p1G = t;
+                t = p0B; p0B = p1B; p1B = t;
             }
 
             output[offset] = (byte)(color0 & 0xFF);
@@ -345,40 +476,54 @@ namespace TexFileTypePlugin
             output[offset + 2] = (byte)(color1 & 0xFF);
             output[offset + 3] = (byte)(color1 >> 8);
 
-            // Build color palette
-            byte[] palette = new byte[12];
-            palette[0] = (byte)maxR; palette[1] = (byte)maxG; palette[2] = (byte)maxB;
-            palette[3] = (byte)minR; palette[4] = (byte)minG; palette[5] = (byte)minB;
-            palette[6] = (byte)((maxR * 2 + minR) / 3);
-            palette[7] = (byte)((maxG * 2 + minG) / 3);
-            palette[8] = (byte)((maxB * 2 + minB) / 3);
-            palette[9] = (byte)((maxR + minR * 2) / 3);
-            palette[10] = (byte)((maxG + minG * 2) / 3);
-            palette[11] = (byte)((maxB + minB * 2) / 3);
+            float[] palR = { p0R, p1R, (p0R * 2 + p1R) / 3.0f, (p0R + p1R * 2) / 3.0f };
+            float[] palG = { p0G, p1G, (p0G * 2 + p1G) / 3.0f, (p0G + p1G * 2) / 3.0f };
+            float[] palB = { p0B, p1B, (p0B * 2 + p1B) / 3.0f, (p0B + p1B * 2) / 3.0f };
 
-            // Encode 16 pixels as 2-bit indices
+            float[] wPalR = new float[4], wPalG = new float[4], wPalB = new float[4];
+            for (int j = 0; j < 4; j++)
+            {
+                wPalR[j] = palR[j] * lumR;
+                wPalG[j] = palG[j] * lumG;
+                wPalB[j] = palB[j] * lumB;
+            }
+
+            float encDirR = wPalR[1] - wPalR[0];
+            float encDirG = wPalG[1] - wPalG[0];
+            float encDirB = wPalB[1] - wPalB[0];
+            float encLen = encDirR * encDirR + encDirG * encDirG + encDirB * encDirB;
+            float encScale = (color0 != color1 && encLen > 0) ? (3.0f / encLen) : 0;
+            encDirR *= encScale; encDirG *= encScale; encDirB *= encScale;
+
+            if (useDithering) { Array.Clear(errorR, 0, 16); Array.Clear(errorG, 0, 16); Array.Clear(errorB, 0, 16); }
+
             uint bits = 0;
+            int[] stepMap = { 0, 2, 3, 1 };
             for (int i = 0; i < 16; i++)
             {
-                int r = colors[i * 3];
-                int g = colors[i * 3 + 1];
-                int b = colors[i * 3 + 2];
+                float r = colorR[i], g = colorG[i], b = colorB[i];
+                if (useDithering) { r += errorR[i]; g += errorG[i]; b += errorB[i]; }
 
-                int bestIndex = 0;
-                int bestDiff = int.MaxValue;
-                for (int j = 0; j < 4; j++)
+                float wr = r * lumR, wg = g * lumG, wb = b * lumB;
+                float fDot = (wr - wPalR[0]) * encDirR + (wg - wPalG[0]) * encDirG + (wb - wPalB[0]) * encDirB;
+                int iStep = fDot <= 0 ? 0 : (fDot >= 3.0f ? 1 : stepMap[(int)(fDot + 0.5f)]);
+
+                bits |= (uint)iStep << (i * 2);
+
+                if (useDithering)
                 {
-                    int dr = r - palette[j * 3];
-                    int dg = g - palette[j * 3 + 1];
-                    int db = b - palette[j * 3 + 2];
-                    int diff = dr * dr + dg * dg + db * db;
-                    if (diff < bestDiff)
+                    float diffR = r - palR[iStep == 0 ? 0 : (iStep == 1 ? 1 : (iStep == 2 ? 2 : 3))];
+                    float diffG = g - palG[iStep == 0 ? 0 : (iStep == 1 ? 1 : (iStep == 2 ? 2 : 3))];
+                    float diffB = b - palB[iStep == 0 ? 0 : (iStep == 1 ? 1 : (iStep == 2 ? 2 : 3))];
+
+                    if ((i & 3) != 3 && i + 1 < 16) { errorR[i + 1] += diffR * (7.0f / 16.0f); errorG[i + 1] += diffG * (7.0f / 16.0f); errorB[i + 1] += diffB * (7.0f / 16.0f); }
+                    if (i < 12)
                     {
-                        bestDiff = diff;
-                        bestIndex = j;
+                        if ((i & 3) != 0) { errorR[i + 3] += diffR * (3.0f / 16.0f); errorG[i + 3] += diffG * (3.0f / 16.0f); errorB[i + 3] += diffB * (3.0f / 16.0f); }
+                        errorR[i + 4] += diffR * (5.0f / 16.0f); errorG[i + 4] += diffG * (5.0f / 16.0f); errorB[i + 4] += diffB * (5.0f / 16.0f);
+                        if ((i & 3) != 3) { errorR[i + 5] += diffR * (1.0f / 16.0f); errorG[i + 5] += diffG * (1.0f / 16.0f); errorB[i + 5] += diffB * (1.0f / 16.0f); }
                     }
                 }
-                bits |= ((uint)bestIndex << (i * 2));
             }
 
             output[offset + 4] = (byte)(bits & 0xFF);

@@ -111,6 +111,21 @@ namespace TexFileTypePlugin
 
         public byte[] Write()
         {
+            return Write(null, null);
+        }
+
+        public byte[] Write(Func<byte[], int, int, byte, byte[]>? compressor)
+        {
+            return Write(compressor, null);
+        }
+
+        /// <summary>
+        /// Write TEX file with optional mipmap generation
+        /// </summary>
+        /// <param name="compressor">Compression function for DXT formats</param>
+        /// <param name="sourceRgba">Original uncompressed RGBA data for high-quality mipmap generation</param>
+        public byte[] Write(Func<byte[], int, int, byte, byte[]>? compressor, byte[]? sourceRgba)
+        {
             using (MemoryStream ms = new MemoryStream())
             using (BinaryWriter bw = new BinaryWriter(ms))
             {
@@ -121,10 +136,180 @@ namespace TexFileTypePlugin
                 bw.Write(Format);
                 bw.Write((byte)0);
                 bw.Write(Mipmaps);
-                bw.Write(Data);
+
+                if (Mipmaps && (Format == DXT1 || Format == DXT5 || Format == BGRA8))
+                {
+                    // Calculate number of mip levels
+                    int maxDim = Math.Max(Width, Height);
+                    int mipmapCount = 0;
+                    int temp = maxDim;
+                    while (temp > 0)
+                    {
+                        mipmapCount++;
+                        temp >>= 1;
+                    }
+
+                    // Use source RGBA if provided, otherwise fallback to decompression
+                    byte[] currentRgba;
+                    if (sourceRgba != null)
+                    {
+                        // Use provided source RGBA - no quality loss
+                        currentRgba = sourceRgba;
+                    }
+                    else if (Format == BGRA8)
+                    {
+                        // Data is BGRA, convert to RGBA
+                        currentRgba = new byte[Data.Length];
+                        for (int i = 0; i < Data.Length; i += 4)
+                        {
+                            currentRgba[i] = Data[i + 2];     // R
+                            currentRgba[i + 1] = Data[i + 1]; // G
+                            currentRgba[i + 2] = Data[i];     // B
+                            currentRgba[i + 3] = Data[i + 3]; // A
+                        }
+                    }
+                    else
+                    {
+                        // DXT compressed - need to decompress to RGBA (fallback)
+                        currentRgba = DecompressToRgba();
+                    }
+
+                    // Generate all mip levels (from full size down to 1x1)
+                    List<(byte[] data, int w, int h)> mipLevels = new();
+                    int mipW = Width;
+                    int mipH = Height;
+                    byte[] mipRgba = currentRgba;
+
+                    for (int i = 0; i < mipmapCount; i++)
+                    {
+                        byte[] mipData;
+                        if (Format == BGRA8)
+                        {
+                            // Convert RGBA to BGRA
+                            mipData = new byte[mipW * mipH * 4];
+                            for (int j = 0; j < mipData.Length; j += 4)
+                            {
+                                mipData[j] = mipRgba[j + 2];     // B
+                                mipData[j + 1] = mipRgba[j + 1]; // G
+                                mipData[j + 2] = mipRgba[j];     // R
+                                mipData[j + 3] = mipRgba[j + 3]; // A
+                            }
+                        }
+                        else if (compressor != null)
+                        {
+                            // Compress using provided compressor
+                            mipData = compressor(mipRgba, mipW, mipH, Format);
+                        }
+                        else
+                        {
+                            // No compressor provided, use original data for first level
+                            if (i == 0)
+                            {
+                                mipData = Data;
+                            }
+                            else
+                            {
+                                // Skip mipmap generation if no compressor
+                                break;
+                            }
+                        }
+
+                        mipLevels.Add((mipData, mipW, mipH));
+
+                        // Downsample for next level
+                        if (mipW > 1 || mipH > 1)
+                        {
+                            int newW = Math.Max(mipW / 2, 1);
+                            int newH = Math.Max(mipH / 2, 1);
+                            mipRgba = DownsampleRgba(mipRgba, mipW, mipH, newW, newH);
+                            mipW = newW;
+                            mipH = newH;
+                        }
+                    }
+
+                    // Write mip levels from smallest to largest
+                    for (int i = mipLevels.Count - 1; i >= 0; i--)
+                    {
+                        bw.Write(mipLevels[i].data);
+                    }
+                }
+                else
+                {
+                    bw.Write(Data);
+                }
 
                 return ms.ToArray();
             }
+        }
+
+        /// <summary>
+        /// Lanczos kernel function
+        /// </summary>
+        private static double Lanczos(double x, double a)
+        {
+            if (x == 0) return 1.0;
+            if (x < -a || x > a) return 0.0;
+            double pix = Math.PI * x;
+            return (Math.Sin(pix) / pix) * (Math.Sin(pix / a) / (pix / a));
+        }
+
+        /// <summary>
+        /// Downsample RGBA image using Lanczos3 resampling
+        /// </summary>
+        private static byte[] DownsampleRgba(byte[] src, int srcW, int srcH, int dstW, int dstH)
+        {
+            byte[] dst = new byte[dstW * dstH * 4];
+            const double a = 3.0; // Lanczos3 kernel size
+
+            double scaleX = (double)srcW / dstW;
+            double scaleY = (double)srcH / dstH;
+
+            for (int y = 0; y < dstH; y++)
+            {
+                for (int x = 0; x < dstW; x++)
+                {
+                    // Source center position
+                    double srcX = (x + 0.5) * scaleX - 0.5;
+                    double srcY = (y + 0.5) * scaleY - 0.5;
+
+                    // Calculate sample window
+                    int x0 = Math.Max(0, (int)Math.Floor(srcX - a));
+                    int x1 = Math.Min(srcW - 1, (int)Math.Ceiling(srcX + a));
+                    int y0 = Math.Max(0, (int)Math.Floor(srcY - a));
+                    int y1 = Math.Min(srcH - 1, (int)Math.Ceiling(srcY + a));
+
+                    double r = 0, g = 0, b = 0, al = 0;
+                    double weightSum = 0;
+
+                    for (int sy = y0; sy <= y1; sy++)
+                    {
+                        double wy = Lanczos(sy - srcY, a);
+                        for (int sx = x0; sx <= x1; sx++)
+                        {
+                            double wx = Lanczos(sx - srcX, a);
+                            double w = wx * wy;
+                            
+                            int srcIdx = (sy * srcW + sx) * 4;
+                            r += src[srcIdx] * w;
+                            g += src[srcIdx + 1] * w;
+                            b += src[srcIdx + 2] * w;
+                            al += src[srcIdx + 3] * w;
+                            weightSum += w;
+                        }
+                    }
+
+                    int dstIdx = (y * dstW + x) * 4;
+                    if (weightSum > 0)
+                    {
+                        dst[dstIdx] = (byte)Math.Clamp(r / weightSum + 0.5, 0, 255);
+                        dst[dstIdx + 1] = (byte)Math.Clamp(g / weightSum + 0.5, 0, 255);
+                        dst[dstIdx + 2] = (byte)Math.Clamp(b / weightSum + 0.5, 0, 255);
+                        dst[dstIdx + 3] = (byte)Math.Clamp(al / weightSum + 0.5, 0, 255);
+                    }
+                }
+            }
+
+            return dst;
         }
 
         public byte[] DecompressToRgba()
@@ -208,12 +393,22 @@ namespace TexFileTypePlugin
             ushort color1 = (ushort)(data[offset + 2] | (data[offset + 3] << 8));
             uint colorBits = (uint)(data[offset + 4] | (data[offset + 5] << 8) | (data[offset + 6] << 16) | (data[offset + 7] << 24));
 
-            byte r0 = (byte)(((color0 >> 11) & 0x1F) << 3);
-            byte g0 = (byte)(((color0 >> 5) & 0x3F) << 2);
-            byte b0 = (byte)((color0 & 0x1F) << 3);
-            byte r1 = (byte)(((color1 >> 11) & 0x1F) << 3);
-            byte g1 = (byte)(((color1 >> 5) & 0x3F) << 2);
-            byte b1 = (byte)((color1 & 0x1F) << 3);
+            // Proper RGB565 to RGB888 expansion - replicate high bits into low bits for full range
+            int r5_0 = (color0 >> 11) & 0x1F;
+            int g6_0 = (color0 >> 5) & 0x3F;
+            int b5_0 = color0 & 0x1F;
+            int r5_1 = (color1 >> 11) & 0x1F;
+            int g6_1 = (color1 >> 5) & 0x3F;
+            int b5_1 = color1 & 0x1F;
+
+            // 5-bit to 8-bit: (val << 3) | (val >> 2) expands 0-31 to 0-255
+            // 6-bit to 8-bit: (val << 2) | (val >> 4) expands 0-63 to 0-255
+            byte r0 = (byte)((r5_0 << 3) | (r5_0 >> 2));
+            byte g0 = (byte)((g6_0 << 2) | (g6_0 >> 4));
+            byte b0 = (byte)((b5_0 << 3) | (b5_0 >> 2));
+            byte r1 = (byte)((r5_1 << 3) | (r5_1 >> 2));
+            byte g1 = (byte)((g6_1 << 2) | (g6_1 >> 4));
+            byte b1 = (byte)((b5_1 << 3) | (b5_1 >> 2));
 
             byte[][] colors = new byte[4][];
             colors[0] = new byte[] { r0, g0, b0, 255 };
@@ -282,12 +477,20 @@ namespace TexFileTypePlugin
             ushort color1 = (ushort)(data[offset + 10] | (data[offset + 11] << 8));
             uint colorBits = (uint)(data[offset + 12] | (data[offset + 13] << 8) | (data[offset + 14] << 16) | (data[offset + 15] << 24));
 
-            byte r0 = (byte)(((color0 >> 11) & 0x1F) << 3);
-            byte g0 = (byte)(((color0 >> 5) & 0x3F) << 2);
-            byte b0 = (byte)((color0 & 0x1F) << 3);
-            byte r1 = (byte)(((color1 >> 11) & 0x1F) << 3);
-            byte g1 = (byte)(((color1 >> 5) & 0x3F) << 2);
-            byte b1 = (byte)((color1 & 0x1F) << 3);
+            // Proper RGB565 to RGB888 expansion - replicate high bits into low bits for full range
+            int r5_0 = (color0 >> 11) & 0x1F;
+            int g6_0 = (color0 >> 5) & 0x3F;
+            int b5_0 = color0 & 0x1F;
+            int r5_1 = (color1 >> 11) & 0x1F;
+            int g6_1 = (color1 >> 5) & 0x3F;
+            int b5_1 = color1 & 0x1F;
+
+            byte r0 = (byte)((r5_0 << 3) | (r5_0 >> 2));
+            byte g0 = (byte)((g6_0 << 2) | (g6_0 >> 4));
+            byte b0 = (byte)((b5_0 << 3) | (b5_0 >> 2));
+            byte r1 = (byte)((r5_1 << 3) | (r5_1 >> 2));
+            byte g1 = (byte)((g6_1 << 2) | (g6_1 >> 4));
+            byte b1 = (byte)((b5_1 << 3) | (b5_1 >> 2));
 
             byte[][] colors = new byte[4][];
             colors[0] = new byte[] { r0, g0, b0 };
