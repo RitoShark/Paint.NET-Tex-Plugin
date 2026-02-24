@@ -3,8 +3,6 @@
 Load and save League of Legends .tex texture files in Paint.NET 5.1+
 
 ## Features
-- Seamless installation wizard, includes [Tex Previews](https://github.com/RitoShark/TexThumbnailProvider) in the installer.
-- Easy uninstall through the wizard.
 - Load DXT1, DXT5, and BGRA8 texture formats.
 - Auto detect the compression, mipmaps and saves acordingly.
 - Second saving option with a menu to manually pick the compression, error diffusion dithering and mipmap generation.
@@ -20,21 +18,10 @@ Load and save League of Legends .tex texture files in Paint.NET 5.1+
 
 ## Installation
 
-### Wizard Installation (RECOMMENDED)
-
-1. Close Paint.NET
-2. Run **Tex Plugin Installer.msi** and follow the installation wizard
-3. Finish the installation with the wizard and start Paint.NET
-- Note! Windows Explorer will restart to apply the changes if you select the Tex File Preview during the installation.
-- Portable version note! If you have the portable version of Paint.NET you will need to install the plugin using the manual installation.
-
-### Manual Installation
-
 1. Close Paint.NET
 2. Open `C:\Program Files\Paint.NET\FileTypes`
 3. Paste **TexFileType.dll** from the releases into this folder
 4. Start Paint.NET
-- Note! This method doesn't include the Tex File Previews, if you want them please go to [TexThumbnailProvider](https://github.com/RitoShark/TexThumbnailProvider) and follow the instructions.
 - Portable version note! In order to install the plugin on the portable version of Paint.NET please paste the dll file into `[Paint.NET folder]\FileTypes`
 
 ## Usage
@@ -70,9 +57,6 @@ Load and save League of Legends .tex texture files in Paint.NET 5.1+
 
 ### Uses LtMAO's tex reading logic. Thanks to Tarngaina.
 - GitHub: https://github.com/tarngaina/LtMAO
-
-### Bbundled thumbnail provider is made by GuiSai.
-- GitHub: https://github.com/GuiSaiUWU
 
 ### Compression and Error Diffusion Dithering Logic
 - BC1/BC3 compression with Floyd-Steinberg dithering is based on 

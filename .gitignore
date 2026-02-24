@@ -20,8 +20,6 @@ x86/
 
 .vscode/
 
-Installer/
-
 exporterrorlog.txt
 reset_registry.reg
 reset_registry.bat
