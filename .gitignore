@@ -1,28 +1,32 @@
-
+# Build output
 [Bb]in/
 [Oo]bj/
+dist/
+
+# Native build artifacts (Bc7Native.cpp stays; the DLL/obj/lib/exp do not)
+native/*.dll
+native/*.obj
+native/*.lib
+native/*.exp
+native/*.pdb
+native/*.ilk
+
+# IDE / editor
 .vs/
+.vscode/
 *.user
 *.suo
 *.cache
 *.log
-*.pdb
-*.dll
-*.exe
-*.xml
 
-# Build results
-[Dd]ebug/
-[Rr]elease/
-x64/
-x86/
+# Misc Windows
+Thumbs.db
+Desktop.ini
 
-
-.vscode/
-
+# Project-local helper outputs / leftovers
 exporterrorlog.txt
 reset_registry.reg
 reset_registry.bat
-
-Thumbs.db
-Desktop.ini
+pack.bat
+texplugin.iss
+installer/

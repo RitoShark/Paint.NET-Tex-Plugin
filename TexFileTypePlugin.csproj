@@ -55,4 +55,11 @@
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="native\Bc7Native.dll" Condition="Exists('native\Bc7Native.dll')">
+      <Link>Bc7Native.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

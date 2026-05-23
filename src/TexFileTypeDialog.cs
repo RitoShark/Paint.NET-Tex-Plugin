@@ -73,6 +73,8 @@ namespace TexFileTypePlugin
                 {
                     TexFileFormat.DXT1_BC1,
                     TexFileFormat.DXT5_BC3,
+                    TexFileFormat.BC7,
+                    TexFileFormat.BC5,
                     TexFileFormat.BGRA8_Uncompressed,
                 };
 
@@ -91,6 +93,8 @@ namespace TexFileTypePlugin
             formatPCI.ControlProperties[ControlInfoPropertyNames.DisplayName].Value = string.Empty;
             formatPCI.SetValueDisplayName(TexFileFormat.DXT1_BC1, "DXT1 / BC1 (no alpha)");
             formatPCI.SetValueDisplayName(TexFileFormat.DXT5_BC3, "DXT5 / BC3 (with alpha)");
+            formatPCI.SetValueDisplayName(TexFileFormat.BC7, "BC7 (high quality, with alpha)");
+            formatPCI.SetValueDisplayName(TexFileFormat.BC5, "BC5 (two channels, normal maps)");
             formatPCI.SetValueDisplayName(TexFileFormat.BGRA8_Uncompressed, "BGRA8 Uncompressed");
 
             // Dithering checkbox
@@ -212,13 +216,13 @@ namespace TexFileTypePlugin
                 sourceRgba = rgba;
 
                 if (fileFormat == TexFileFormat.DXT1_BC1)
-                {
                     data = DirectXTexCompressor.CompressBC1(rgba, width, height, useDithering, usePerceptual);
-                }
+                else if (fileFormat == TexFileFormat.BC5)
+                    data = BC4BC5Codec.CompressBC5(rgba, width, height);
+                else if (fileFormat == TexFileFormat.BC7)
+                    data = BC7Encoder.CompressBC7(rgba, width, height);
                 else
-                {
                     data = DirectXTexCompressor.CompressBC3(rgba, width, height, useDithering, usePerceptual);
-                }
             }
 
             TexFile tex = new TexFile
@@ -232,10 +236,10 @@ namespace TexFileTypePlugin
 
             byte[] fileData = tex.Write((rgba, w, h, fmt) =>
             {
-                if (fmt == 10) // DXT1
-                    return DirectXTexCompressor.CompressBC1(rgba, w, h, useDithering, usePerceptual);
-                else // DXT5
-                    return DirectXTexCompressor.CompressBC3(rgba, w, h, useDithering, usePerceptual);
+                if (fmt == TexFile.DXT1) return DirectXTexCompressor.CompressBC1(rgba, w, h, useDithering, usePerceptual);
+                if (fmt == TexFile.BC5)  return BC4BC5Codec.CompressBC5(rgba, w, h);
+                if (fmt == TexFile.BC7)  return BC7Encoder.CompressBC7(rgba, w, h);
+                return DirectXTexCompressor.CompressBC3(rgba, w, h, useDithering, usePerceptual);
             }, sourceRgba);
             output.Write(fileData, 0, fileData.Length);
         }
@@ -254,6 +258,8 @@ namespace TexFileTypePlugin
     {
         DXT1_BC1 = 10,
         DXT5_BC3 = 12,
+        BC7 = 13,
+        BC5 = 14,
         BGRA8_Uncompressed = 20,
     }
 

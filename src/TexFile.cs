@@ -14,7 +14,40 @@ namespace TexFileTypePlugin
 
         public const byte DXT1 = 10;
         public const byte DXT5 = 12;
+        public const byte BC7 = 13;
+        public const byte BC5 = 14;
         public const byte BGRA8 = 20;
+        public const byte RGBA16_SNORM = 21;
+
+        private static int GetBlockSize(byte format)
+        {
+            switch (format)
+            {
+                case DXT1: return 8;
+                case DXT5: return 16;
+                case BC5:  return 16;
+                case BC7:  return 16;
+                default: return 0;
+            }
+        }
+
+        private static bool IsBlockCompressed(byte format)
+        {
+            return format == DXT1 || format == DXT5 || format == BC5 || format == BC7;
+        }
+
+        private static int CalcMipSize(byte format, int w, int h)
+        {
+            if (IsBlockCompressed(format))
+            {
+                int bw = (w + 3) / 4;
+                int bh = (h + 3) / 4;
+                return bw * bh * GetBlockSize(format);
+            }
+            if (format == BGRA8) return w * h * 4;
+            if (format == RGBA16_SNORM) return w * h * 8;
+            return 0;
+        }
 
         public static TexFile Read(byte[] data)
         {
@@ -38,7 +71,9 @@ namespace TexFileTypePlugin
                 byte unknown2 = br.ReadByte();
                 tex.Mipmaps = br.ReadBoolean();
 
-                if (tex.Mipmaps && (tex.Format == DXT1 || tex.Format == DXT5 || tex.Format == BGRA8))
+                bool knownFormat = IsBlockCompressed(tex.Format) || tex.Format == BGRA8 || tex.Format == RGBA16_SNORM;
+
+                if (tex.Mipmaps && knownFormat)
                 {
                     int maxDim = Math.Max(tex.Width, tex.Height);
                     int mipmapCount = 0;
@@ -47,61 +82,24 @@ namespace TexFileTypePlugin
                         mipmapCount++;
                         maxDim >>= 1;
                     }
-                    
+
                     List<byte[]> mipmaps = new List<byte[]>();
                     for (int i = mipmapCount - 1; i >= 0; i--)
                     {
                         int mipWidth = Math.Max(tex.Width >> i, 1);
                         int mipHeight = Math.Max(tex.Height >> i, 1);
-                        
-                        int mipSize;
-                        if (tex.Format == DXT1)
-                        {
-                            int blockWidth = (mipWidth + 3) / 4;
-                            int blockHeight = (mipHeight + 3) / 4;
-                            mipSize = blockWidth * blockHeight * 8;
-                        }
-                        else if (tex.Format == DXT5)
-                        {
-                            int blockWidth = (mipWidth + 3) / 4;
-                            int blockHeight = (mipHeight + 3) / 4;
-                            mipSize = blockWidth * blockHeight * 16;
-                        }
-                        else
-                        {
-                            mipSize = mipWidth * mipHeight * 4;
-                        }
-                        
+                        int mipSize = CalcMipSize(tex.Format, mipWidth, mipHeight);
                         byte[] mipData = br.ReadBytes(mipSize);
                         mipmaps.Add(mipData);
                     }
-                    
+
                     tex.Data = mipmaps[mipmaps.Count - 1];
                 }
                 else
                 {
-                    int mainTextureSize;
-                    if (tex.Format == DXT1)
-                    {
-                        int blockWidth = (tex.Width + 3) / 4;
-                        int blockHeight = (tex.Height + 3) / 4;
-                        mainTextureSize = blockWidth * blockHeight * 8;
-                    }
-                    else if (tex.Format == DXT5)
-                    {
-                        int blockWidth = (tex.Width + 3) / 4;
-                        int blockHeight = (tex.Height + 3) / 4;
-                        mainTextureSize = blockWidth * blockHeight * 16;
-                    }
-                    else if (tex.Format == BGRA8)
-                    {
-                        mainTextureSize = tex.Width * tex.Height * 4;
-                    }
-                    else
-                    {
-                        mainTextureSize = (int)(ms.Length - ms.Position);
-                    }
-                    
+                    int mainTextureSize = knownFormat
+                        ? CalcMipSize(tex.Format, tex.Width, tex.Height)
+                        : (int)(ms.Length - ms.Position);
                     tex.Data = br.ReadBytes(mainTextureSize);
                 }
 
@@ -137,7 +135,7 @@ namespace TexFileTypePlugin
                 bw.Write((byte)0);
                 bw.Write(Mipmaps);
 
-                if (Mipmaps && (Format == DXT1 || Format == DXT5 || Format == BGRA8))
+                if (Mipmaps && (Format == DXT1 || Format == DXT5 || Format == BC5 || Format == BC7 || Format == BGRA8))
                 {
                     // Calculate number of mip levels
                     int maxDim = Math.Max(Width, Height);
@@ -314,22 +312,33 @@ namespace TexFileTypePlugin
 
         public byte[] DecompressToRgba()
         {
-            if (Format == BGRA8)
+            if (Format == BGRA8) return DecompressBgra8();
+            if (Format == DXT1)  return DecompressDxt1();
+            if (Format == DXT5)  return DecompressDxt5();
+            if (Format == BC5)   return BC4BC5Codec.DecompressBC5(Data, Width, Height, isSigned: false);
+            if (Format == BC7)   return BC7Decoder.DecompressBC7(Data, Width, Height);
+            if (Format == RGBA16_SNORM) return DecompressRgba16Snorm();
+            throw new FormatException($"Unsupported format: {Format}");
+        }
+
+        private byte[] DecompressRgba16Snorm()
+        {
+            byte[] rgba = new byte[Width * Height * 4];
+            int srcOff = 0;
+            for (int i = 0; i < Width * Height; i++)
             {
-                return DecompressBgra8();
+                for (int c = 0; c < 4; c++)
+                {
+                    short s = (short)(Data[srcOff] | (Data[srcOff + 1] << 8));
+                    srcOff += 2;
+                    // map [-1,1] -> [0,255]; treat -32768 as -32767 (per SNORM spec)
+                    if (s == -32768) s = -32767;
+                    float f = s / 32767.0f;
+                    f = (f + 1.0f) * 0.5f;
+                    rgba[i * 4 + c] = (byte)Math.Clamp(f * 255.0f + 0.5f, 0, 255);
+                }
             }
-            else if (Format == DXT1)
-            {
-                return DecompressDxt1();
-            }
-            else if (Format == DXT5)
-            {
-                return DecompressDxt5();
-            }
-            else
-            {
-                throw new FormatException($"Unsupported format: {Format}");
-            }
+            return rgba;
         }
 
         private byte[] DecompressBgra8()

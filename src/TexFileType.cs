@@ -74,9 +74,29 @@ namespace TexFileTypePlugin
                 format = savedFormat;
             }
 
+            byte effectiveFormat = format;
+
+            // Auto-swap DXT1 <-> DXT5 based on actual alpha content.
+            // DXT1 has no alpha; DXT5 carries it. If the canvas gained alpha after loading
+            // a DXT1 (or lost alpha after loading a DXT5), pick the right format silently
+            // so a quick Ctrl+S doesn't blow away transparency or waste bytes.
+            if (effectiveFormat == TexFile.DXT1 || effectiveFormat == TexFile.DXT5)
+            {
+                bool hasAlpha = false;
+                for (int y = 0; y < height && !hasAlpha; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        if (scratchSurface[x, y].A != 255) { hasAlpha = true; break; }
+                    }
+                }
+                if (effectiveFormat == TexFile.DXT1 && hasAlpha)  effectiveFormat = TexFile.DXT5;
+                if (effectiveFormat == TexFile.DXT5 && !hasAlpha) effectiveFormat = TexFile.DXT1;
+            }
+
             byte[] data;
-            
-            if (format == 20)
+
+            if (effectiveFormat == TexFile.BGRA8)
             {
                 byte[] bgra = new byte[width * height * 4];
                 for (int y = 0; y < height; y++)
@@ -97,13 +117,11 @@ namespace TexFileTypePlugin
             {
                 if (width % 4 != 0 || height % 4 != 0)
                 {
-                    string errorMsg = $"Image dimensions must be divisible by 4 for DXT compression.\n\n" +
+                    string errorMsg = $"Image dimensions must be divisible by 4 for block-compressed formats.\n\n" +
                                     $"Current size: {width}x{height}\n" +
                                     $"Width: {width} (needs to be {((width + 3) / 4) * 4})\n" +
                                     $"Height: {height} (needs to be {((height + 3) / 4) * 4})\n\n" +
-                                    $"Please resize your image to dimensions divisible by 4.\n" +
-                                    $"Examples: 1024x1024, 2048x2048, 512x256, etc.";
-                    
+                                    $"Please resize your image to dimensions divisible by 4.";
                     throw new FormatException(errorMsg);
                 }
 
@@ -121,14 +139,14 @@ namespace TexFileTypePlugin
                     }
                 }
 
-                if (format == 10)
-                {
+                if (effectiveFormat == TexFile.DXT1)
                     data = CompressDxt1Native(rgba, width, height);
-                }
+                else if (effectiveFormat == TexFile.BC5)
+                    data = BC4BC5Codec.CompressBC5(rgba, width, height);
+                else if (effectiveFormat == TexFile.BC7)
+                    data = BC7Encoder.CompressBC7(rgba, width, height);
                 else
-                {
                     data = CompressDxt5Native(rgba, width, height);
-                }
             }
 
             bool generateMipmaps = false;
@@ -141,17 +159,17 @@ namespace TexFileTypePlugin
             {
                 Width = (ushort)width,
                 Height = (ushort)height,
-                Format = format,
+                Format = effectiveFormat,
                 Mipmaps = generateMipmaps,
                 Data = data
             };
 
             byte[] fileData = tex.Write((rgba, w, h, fmt) =>
             {
-                if (fmt == 10) // DXT1
-                    return CompressDxt1Native(rgba, w, h);
-                else // DXT5
-                    return CompressDxt5Native(rgba, w, h);
+                if (fmt == TexFile.DXT1) return CompressDxt1Native(rgba, w, h);
+                if (fmt == TexFile.BC5)  return BC4BC5Codec.CompressBC5(rgba, w, h);
+                if (fmt == TexFile.BC7)  return BC7Encoder.CompressBC7(rgba, w, h);
+                return CompressDxt5Native(rgba, w, h);
             });
             output.Write(fileData, 0, fileData.Length);
         }
